@@ -6,15 +6,15 @@ pub use fluvio_future::openssl::DefaultServerTlsStream;
 pub use fluvio_future::openssl::TlsAcceptor;
 pub use proxy::*;
 
+use anyhow::anyhow;
+use errors::Error;
 use rustls::internal::pemfile::{certs, pkcs8_private_keys, rsa_private_keys};
 use rustls::Certificate;
 use rustls::PrivateKey;
-use anyhow::anyhow;
 use std::fs::File;
 use std::io;
 use std::io::BufReader;
 use std::path::Path;
-use errors::Error;
 pub fn load_certs(path: &Path) -> Result<Vec<Certificate>, Error> {
     certs(&mut BufReader::new(File::open(path)?))
         .map_err(|_| Error::Eor(anyhow!("could not find carts")))

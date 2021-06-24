@@ -1,4 +1,4 @@
-use std::{io::Error as IoError, sync::Arc, fmt, io};
+use std::{fmt, io, io::Error as IoError, sync::Arc};
 
 use event_listener::Event;
 use futures_util::io::AsyncReadExt;
@@ -14,17 +14,17 @@ use async_tls::TlsAcceptor;
 type TerminateEvent = Arc<Event>;
 
 use crate::authenticator::{Authenticator, NullAuthenticator};
-use errors::Result;
-use std::net::{SocketAddr, IpAddr, Ipv4Addr, SocketAddrV4, Ipv6Addr, SocketAddrV6};
-use futures_util::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use std::io::Cursor;
+use async_std::net::{TcpListener, TcpStream, UdpSocket};
+use async_std::task::spawn;
 use bytes::{Buf, BufMut};
 use errors::Error;
-use std::fmt::{Debug, Formatter};
-use async_std::net::{TcpStream, TcpListener, UdpSocket};
-use async_std::task::spawn;
+use errors::Result;
 use futures_util::future::Either;
 use futures_util::FutureExt;
+use futures_util::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use std::fmt::{Debug, Formatter};
+use std::io::Cursor;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
 type SharedAuthenticator = Arc<Box<dyn Authenticator>>;
 
@@ -40,8 +40,7 @@ pub async fn start_with_authenticator(
     acceptor: TlsAcceptor,
     authenticator: Box<dyn Authenticator>,
 ) -> Result<()> {
-    let builder =
-        ProxyBuilder::new(addr.to_string(), acceptor).with_authenticator(authenticator);
+    let builder = ProxyBuilder::new(addr.to_string(), acceptor).with_authenticator(authenticator);
     builder.start().await
 }
 
@@ -73,7 +72,6 @@ impl ProxyBuilder {
     }
 
     pub async fn start(self) -> Result<()> {
-
         let listener = TcpListener::bind(&self.addr).await?;
         info!("proxy started at: {}", self.addr);
         let mut incoming = listener.incoming();
@@ -171,15 +169,15 @@ impl UdpHeader {
     }
 
     pub async fn read_from<R>(stream: &mut R) -> Result<Self>
-        where
-            R: AsyncRead + Unpin,
+    where
+        R: AsyncRead + Unpin,
     {
         let addr = Address::read_from_stream(stream).await?;
         let mut buf = [0u8; 2];
         stream.read_exact(&mut buf).await?;
         let len = ((buf[0] as u16) << 8) | (buf[1] as u16);
         stream.read_exact(&mut buf).await?;
-        log::debug!("udp addr={} len={}", addr, len);
+        // log::debug!("udp addr={} len={}", addr, len);
         Ok(Self {
             address: addr,
             payload_len: len,
@@ -187,8 +185,8 @@ impl UdpHeader {
     }
 
     pub async fn write_to<W>(&self, w: &mut W) -> Result<()>
-        where
-            W: AsyncWrite + Unpin,
+    where
+        W: AsyncWrite + Unpin,
     {
         let mut buf = Vec::with_capacity(self.address.serialized_len() + 2 + 1);
         let cursor = &mut buf;
@@ -209,7 +207,6 @@ async fn proxy(
 ) -> Result<()> {
     use crate::copy::copy;
     // use fluvio_future::task::spawn;
-
 
     let mut hash_buf = [0u8; HASH_STR_LEN];
     let len = tls_stream.read(&mut hash_buf).await?;
@@ -237,7 +234,7 @@ async fn proxy(
 
     let header = match cmd_buf[0] {
         CMD_TCP_CONNECT => {
-            debug!("TcpConnect target addr: {:?}",addr);
+            debug!("TcpConnect target addr: {:?}", addr);
 
             let tcp_stream = TcpStream::connect(addr.to_string()).await?;
 
@@ -256,7 +253,7 @@ async fn proxy(
 
             let s_t = format!("{}->{}", source, addr.to_string());
             let t_s = format!("{}->{}", addr.to_string(), source);
-            let source_to_target_ft  = async move  {
+            let source_to_target_ft = async move {
                 match copy(&mut from_tls_stream, &mut target_sink, s_t.clone()).await {
                     Ok(len) => {
                         debug!("total {} bytes copied from source to target: {}", len, s_t);
@@ -285,10 +282,9 @@ async fn proxy(
             spawn(source_to_target_ft);
             spawn(target_to_source_ft);
             // Ok(RequestHeader::TcpConnect(hash_buf, addr))
-        },
+        }
         CMD_UDP_ASSOCIATE => {
-            debug!("UdpAssociate target addr: {:?}",addr);
-
+            debug!("UdpAssociate target addr: {:?}", addr);
 
             const RELAY_BUFFER_SIZE: usize = 0x4000;
             let outbound = UdpSocket::bind(SocketAddr::from(SocketAddrV6::new(
@@ -297,7 +293,7 @@ async fn proxy(
                 0,
                 0,
             )))
-                .await?;
+            .await?;
             let (mut tls_stream_reader, mut tls_stream_writer) = tls_stream.split();
 
             let client_to_server = Box::pin(async {
@@ -309,10 +305,15 @@ async fn proxy(
                         .read_exact(&mut buf[..header.payload_len as usize])
                         .await?;
 
-
-
-                    match outbound.send_to(&buf[..header.payload_len as usize], header.address.to_string()).await {
+                    match outbound
+                        .send_to(
+                            &buf[..header.payload_len as usize],
+                            header.address.to_string(),
+                        )
+                        .await
+                    {
                         Ok(n) => {
+                            debug!("udp copy to remote: {} bytes", n);
                             // if n == 0 {
                             //     tls_socket.clone().close().await?;
                             // }
@@ -323,12 +324,10 @@ async fn proxy(
                             break;
                         }
                     }
-
-
                 }
                 Ok(()) as Result<()>
             })
-                .fuse();
+            .fuse();
             let server_to_client = Box::pin(async {
                 let mut buf = [0u8; RELAY_BUFFER_SIZE];
                 loop {
@@ -340,12 +339,13 @@ async fn proxy(
                     let header = UdpHeader::new(&Address::from(dst), len);
                     header.write_to(&mut tls_stream_writer).await?;
                     tls_stream_writer.write_all(&buf[..len]).await?;
+                    debug!("udp copy to client: {} bytes", len);
                 }
                 tls_stream_writer.flush().await?;
                 tls_stream_writer.close().await?;
                 Ok(()) as Result<()>
             })
-                .fuse();
+            .fuse();
             let res = futures::future::select(client_to_server, server_to_client).await;
             match res {
                 Either::Left((Err(e), _)) => {
@@ -359,18 +359,12 @@ async fn proxy(
                 Either::Left((Ok(_), _)) | Either::Right((Ok(_), _)) => (),
             };
 
-
-
-
-
-
-
             // Ok(RequestHeader::UdpAssociate(hash_buf))
-        },
+        }
         _ => {
             error!("cant decode incoming stream");
             // Err(Error::Eor(anyhow::anyhow!("invalid command")))
-        },
+        }
     };
 
     // debug!(
@@ -421,7 +415,6 @@ async fn proxy(
     Ok(())
 }
 
-
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Address {
     /// Socket address (IP Address)
@@ -449,8 +442,8 @@ impl Address {
     }
 
     async fn read_from_stream<R>(stream: &mut R) -> Result<Address>
-        where
-            R: AsyncRead + Unpin,
+    where
+        R: AsyncRead + Unpin,
     {
         let mut addr_type_buf = [0u8; 1];
         let _ = stream.read_exact(&mut addr_type_buf).await?;

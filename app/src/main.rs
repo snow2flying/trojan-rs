@@ -1,7 +1,6 @@
 use async_std::task::block_on;
+use async_tls::TlsAcceptor;
 use errors::Result;
-use trojan::{ProxyBuilder, load_certs, load_keys};
-use std::sync::Arc;
 use rustls::{
     // AllowAnyAnonymousOrAuthenticatedClient, AllowAnyAuthenticatedClient,
     NoClientAuth,
@@ -9,15 +8,12 @@ use rustls::{
     ServerConfig,
 };
 use std::io;
-use async_tls::TlsAcceptor;
-
-
-
+use std::sync::Arc;
+use trojan::{load_certs, load_keys, ProxyBuilder};
 
 const PROXY: &str = "127.0.0.1:10443";
 fn main() -> Result<()> {
     env_logger::init();
-
 
     let cert = "config.ssl.server().unwrap().cert.as_ref()".as_ref();
     let key = " config.ssl.server().unwrap().key.as_ref()".as_ref();
@@ -46,9 +42,7 @@ fn main() -> Result<()> {
 
     let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
 
-
     block_on(async {
-
         let proxy = ProxyBuilder::new(PROXY.to_owned(), tls_acceptor);
         proxy.start().await.unwrap();
     });

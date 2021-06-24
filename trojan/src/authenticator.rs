@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 
-use async_tls::server::TlsStream;
 use async_std::net::TcpStream;
-
+use async_tls::server::TlsStream;
 
 /// Abstracts logic to authenticate incoming stream and forward authoization context to target
 #[async_trait]
