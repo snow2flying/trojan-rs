@@ -1,30 +1,23 @@
-use std::{fmt, io, io::Error as IoError, sync::Arc};
-
-use event_listener::Event;
-use futures_util::io::AsyncReadExt;
-use futures_util::stream::StreamExt;
-use log::debug;
-use log::error;
-use log::info;
-
-// use fluvio_future::openssl::{DefaultServerTlsStream, TlsAcceptor};
-use async_tls::server::TlsStream;
-use async_tls::TlsAcceptor;
-
-type TerminateEvent = Arc<Event>;
-
 use crate::authenticator::{Authenticator, NullAuthenticator};
 use async_std::net::{TcpListener, TcpStream, UdpSocket};
 use async_std::task::spawn;
+use async_tls::server::TlsStream;
+use async_tls::TlsAcceptor;
 use bytes::{Buf, BufMut};
 use errors::Error;
 use errors::Result;
 use futures_util::future::Either;
+use futures_util::io::AsyncReadExt;
+use futures_util::stream::StreamExt;
 use futures_util::FutureExt;
 use futures_util::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use log::debug;
+use log::error;
+use log::info;
 use std::fmt::{Debug, Formatter};
 use std::io::Cursor;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::{fmt, sync::Arc};
 
 type SharedAuthenticator = Arc<Box<dyn Authenticator>>;
 
@@ -48,7 +41,6 @@ pub struct ProxyBuilder {
     addr: String,
     acceptor: TlsAcceptor,
     authenticator: Box<dyn Authenticator>,
-    terminate: TerminateEvent,
 }
 
 impl ProxyBuilder {
@@ -57,17 +49,11 @@ impl ProxyBuilder {
             addr,
             acceptor,
             authenticator: Box::new(NullAuthenticator),
-            terminate: Arc::new(Event::new()),
         }
     }
 
     pub fn with_authenticator(mut self, authenticator: Box<dyn Authenticator>) -> Self {
         self.authenticator = authenticator;
-        self
-    }
-
-    pub fn with_terminate(mut self, terminate: TerminateEvent) -> Self {
-        self.terminate = terminate;
         self
     }
 
@@ -143,10 +129,7 @@ const HASH_STR_LEN: usize = 56;
 /// o  DST.ADDR desired destination address
 /// o  DST.PORT desired destination port in network octet order
 /// ```
-enum RequestHeader {
-    TcpConnect([u8; HASH_STR_LEN], Address),
-    UdpAssociate([u8; HASH_STR_LEN]),
-}
+///
 /// ```plain
 /// +------+----------+----------+--------+---------+----------+
 /// | ATYP | DST.ADDR | DST.PORT | Length |  CRLF   | Payload  |
@@ -154,16 +137,16 @@ enum RequestHeader {
 /// |  1   | Variable |    2     |   2    | X'0D0A' | Variable |
 /// +------+----------+----------+--------+---------+----------+
 /// ```
-pub struct UdpHeader {
-    pub address: Address,
+pub struct UdpAssociateHeader {
+    pub addr: Address,
     pub payload_len: u16,
 }
 
-impl UdpHeader {
+impl UdpAssociateHeader {
     #[inline]
     pub fn new(addr: &Address, payload_len: usize) -> Self {
         Self {
-            address: addr.clone(),
+            addr: addr.clone(),
             payload_len: payload_len as u16,
         }
     }
@@ -179,7 +162,7 @@ impl UdpHeader {
         stream.read_exact(&mut buf).await?;
         // log::debug!("udp addr={} len={}", addr, len);
         Ok(Self {
-            address: addr,
+            addr,
             payload_len: len,
         })
     }
@@ -188,9 +171,9 @@ impl UdpHeader {
     where
         W: AsyncWrite + Unpin,
     {
-        let mut buf = Vec::with_capacity(self.address.serialized_len() + 2 + 1);
+        let mut buf = Vec::with_capacity(self.addr.serialized_len() + 2 + 1);
         let cursor = &mut buf;
-        self.address.write_to_buf(cursor);
+        self.addr.write_to_buf(cursor);
         cursor.put_u16(self.payload_len);
         cursor.put_slice(b"\r\n");
         w.write_all(&buf).await?;
@@ -206,8 +189,6 @@ async fn proxy(
     authenticator: SharedAuthenticator,
 ) -> Result<()> {
     use crate::copy::copy;
-    // use fluvio_future::task::spawn;
-
     let mut hash_buf = [0u8; HASH_STR_LEN];
     let len = tls_stream.read(&mut hash_buf).await?;
     if len != HASH_STR_LEN {
@@ -232,7 +213,7 @@ async fn proxy(
     let addr = Address::read_from_stream(&mut tls_stream).await?;
     tls_stream.read_exact(&mut crlf_buf).await?;
 
-    let header = match cmd_buf[0] {
+    match cmd_buf[0] {
         CMD_TCP_CONNECT => {
             debug!("TcpConnect target addr: {:?}", addr);
 
@@ -278,9 +259,22 @@ async fn proxy(
                 }
                 Ok::<(), Error>(())
             };
-
-            spawn(source_to_target_ft);
-            spawn(target_to_source_ft);
+            futures::pin_mut!(source_to_target_ft);
+            futures::pin_mut!(target_to_source_ft);
+            // spawn(source_to_target_ft);
+            // spawn(target_to_source_ft);
+            let res = futures::future::select(source_to_target_ft, target_to_source_ft).await;
+            match res {
+                Either::Left((Err(e), _)) => {
+                    debug!("udp copy to remote closed");
+                    Err(anyhow::anyhow!("====================tcp proxy copy local to remote error: {:?}=================",e))?
+                }
+                Either::Right((Err(e), _)) => {
+                    debug!("udp copy to local closed");
+                    Err(anyhow::anyhow!("====================tcp proxy copy remote to local error: {:?}==================",e))?
+                }
+                Either::Left((Ok(_), _)) | Either::Right((Ok(_), _)) => (),
+            };
             // Ok(RequestHeader::TcpConnect(hash_buf, addr))
         }
         CMD_UDP_ASSOCIATE => {
@@ -299,7 +293,7 @@ async fn proxy(
             let client_to_server = Box::pin(async {
                 loop {
                     let mut buf = [0u8; RELAY_BUFFER_SIZE];
-                    let header = UdpHeader::read_from(&mut tls_stream_reader).await?;
+                    let header = UdpAssociateHeader::read_from(&mut tls_stream_reader).await?;
 
                     tls_stream_reader
                         .read_exact(&mut buf[..header.payload_len as usize])
@@ -308,7 +302,7 @@ async fn proxy(
                     match outbound
                         .send_to(
                             &buf[..header.payload_len as usize],
-                            header.address.to_string(),
+                            header.addr.to_string(),
                         )
                         .await
                     {
@@ -336,7 +330,7 @@ async fn proxy(
                         // tls_socket.clone().close().await?;
                         break;
                     }
-                    let header = UdpHeader::new(&Address::from(dst), len);
+                    let header = UdpAssociateHeader::new(&Address::from(dst), len);
                     header.write_to(&mut tls_stream_writer).await?;
                     tls_stream_writer.write_all(&buf[..len]).await?;
                     debug!("udp copy to client: {} bytes", len);
@@ -414,7 +408,8 @@ async fn proxy(
     // spawn(target_to_source_ft);
     Ok(())
 }
-
+/// the following code copy from
+/// https://github.com/p4gefau1t/trojan-r/blob/main/src/protocol/mod.rs
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Address {
     /// Socket address (IP Address)
@@ -426,11 +421,6 @@ impl Address {
     const ADDR_TYPE_IPV4: u8 = 1;
     const ADDR_TYPE_DOMAIN_NAME: u8 = 3;
     const ADDR_TYPE_IPV6: u8 = 4;
-
-    #[inline]
-    fn new_dummy_address() -> Address {
-        Address::SocketAddress(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0))
-    }
 
     #[inline]
     fn serialized_len(&self) -> usize {

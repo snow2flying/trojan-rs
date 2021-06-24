@@ -44,7 +44,8 @@ fn main() -> Result<()> {
 
     block_on(async {
         let proxy = ProxyBuilder::new(PROXY.to_owned(), tls_acceptor);
-        proxy.start().await.unwrap();
-    });
+        proxy.start().await?;
+        Ok(()) as Result<()>
+    })?;
     Ok(())
 }
