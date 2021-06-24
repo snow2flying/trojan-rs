@@ -2409,6 +2409,7 @@ dependencies = [
  "event-listener",
  "fluvio-future",
  "flv-util",
+ "futures",
  "futures-lite",
  "futures-util",
  "log",
