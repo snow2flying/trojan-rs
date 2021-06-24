@@ -1,4 +1,3 @@
-pub mod authenticator;
 mod copy;
 mod proxy;
 

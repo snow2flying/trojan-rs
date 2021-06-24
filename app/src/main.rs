@@ -11,8 +11,11 @@ use std::io;
 use std::sync::Arc;
 use trojan::{load_certs, load_keys, ProxyBuilder};
 
-const PROXY: &str = "127.0.0.1:10443";
+const PROXY: &str = "0.0.0.0:10443";
+const FALLBACK: &str = "baidu.com:443";
 fn main() -> Result<()> {
+     let authenticator = vec!["damo".to_string()];
+
     env_logger::init();
 
     let cert = "config.ssl.server().unwrap().cert.as_ref()".as_ref();
@@ -43,7 +46,7 @@ fn main() -> Result<()> {
     let tls_acceptor = TlsAcceptor::from(Arc::new(tls_config));
 
     block_on(async {
-        let proxy = ProxyBuilder::new(PROXY.to_owned(), tls_acceptor);
+        let proxy = ProxyBuilder::new(PROXY.to_owned(), tls_acceptor, authenticator, FALLBACK.to_owned());
         proxy.start().await?;
         Ok(()) as Result<()>
     })?;
