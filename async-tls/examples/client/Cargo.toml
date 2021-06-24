@@ -1,0 +1,11 @@
+[package]
+name = "client"
+version = "0.5.0"
+authors = ["The async-rs authors", "quininer <quininer@live.com>"]
+edition = "2018"
+
+[dependencies]
+structopt = "0.3.9"
+rustls    = "0.19.0"
+async-std = "1.5.0"
+async-tls = { path = "../.." }

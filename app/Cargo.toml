@@ -10,6 +10,10 @@ trojan = {path = "../trojan"}
 errors = {path = "../errors"}
 async-std = "1.9.0"
 env_logger = "0.8"
+rustls = "0.19.1"
+async-tls = {path = "../async-tls"}
+
+
 [[bin]]
 name = "trojan"
 path = "src/main.rs"

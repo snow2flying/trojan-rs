@@ -8,8 +8,9 @@ use log::debug;
 use log::error;
 use log::info;
 
-use fluvio_future::net::TcpStream;
-use fluvio_future::openssl::{DefaultServerTlsStream, TlsAcceptor};
+// use fluvio_future::openssl::{DefaultServerTlsStream, TlsAcceptor};
+use async_tls::server::TlsStream;
+use async_tls::TlsAcceptor;
 
 type TerminateEvent = Arc<Event>;
 
@@ -21,6 +22,9 @@ use std::io::Cursor;
 use bytes::{Buf, BufMut};
 use errors::Error;
 use std::fmt::{Debug, Formatter};
+use async_std::net::{TcpStream, TcpListener};
+use async_std::task::spawn;
+
 
 type SharedAuthenticator = Arc<Box<dyn Authenticator>>;
 
@@ -69,10 +73,6 @@ impl ProxyBuilder {
     }
 
     pub async fn start(self) -> Result<()> {
-        use tokio::select;
-
-        use fluvio_future::net::TcpListener;
-        use fluvio_future::task::spawn;
 
         let listener = TcpListener::bind(&self.addr).await?;
         info!("proxy started at: {}", self.addr);
@@ -110,7 +110,7 @@ async fn process_stream(
         Ok(inner_stream) => {
             debug!("handshake success from: {}", source);
             if let Err(err) = proxy(inner_stream, source.clone(), authenticator).await {
-                error!("error processing tls: {} from source: {}", err, source);
+                error!("error processing tls: {:?} from source: {}", err, source);
             }
         }
         Err(err) => error!("error handshaking: {:?} from source: {}", err, source),
@@ -154,7 +154,7 @@ const CMD_TCP_CONNECT: u8 = 0x01;
 const CMD_UDP_ASSOCIATE: u8 = 0x03;
 
 async fn proxy(
-    mut tls_stream: DefaultServerTlsStream,
+    mut tls_stream: TlsStream<TcpStream>,
     source: String,
     authenticator: SharedAuthenticator,
 ) -> Result<()> {

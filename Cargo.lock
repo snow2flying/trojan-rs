@@ -52,8 +52,10 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "async-std",
+ "async-tls",
  "env_logger",
  "errors",
+ "rustls",
  "trojan",
 ]
 
@@ -236,6 +238,21 @@ name = "async-task"
 version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e91831deabf0d6d7ec49552e489aed63b7456a7a3c46cff62adad428110b0af0"
+
+[[package]]
+name = "async-tls"
+version = "0.11.0"
+dependencies = [
+ "async-std",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-util",
+ "lazy_static",
+ "rustls",
+ "webpki",
+ "webpki-roots",
+]
 
 [[package]]
 name = "async-trait"
@@ -2383,6 +2400,8 @@ name = "trojan"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-std",
+ "async-tls",
  "async-trait",
  "bytes 1.0.1",
  "cfg-if 1.0.0",
@@ -2394,6 +2413,7 @@ dependencies = [
  "futures-util",
  "log",
  "pin-project-lite 0.2.6",
+ "rustls",
  "serde",
  "serde_json",
  "tokio 1.7.1",

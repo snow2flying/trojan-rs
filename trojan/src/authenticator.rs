@@ -1,13 +1,15 @@
 use async_trait::async_trait;
-use fluvio_future::net::TcpStream;
-use fluvio_future::openssl::DefaultServerTlsStream;
+
+use async_tls::server::TlsStream;
+use async_std::net::TcpStream;
+
 
 /// Abstracts logic to authenticate incoming stream and forward authoization context to target
 #[async_trait]
 pub trait Authenticator: Send + Sync {
     async fn authenticate(
         &self,
-        incoming_tls_stream: &DefaultServerTlsStream,
+        incoming_tls_stream: &TlsStream<TcpStream>,
         target_tcp_stream: &TcpStream,
     ) -> Result<bool, std::io::Error>;
 }
@@ -19,7 +21,7 @@ pub(crate) struct NullAuthenticator;
 impl Authenticator for NullAuthenticator {
     async fn authenticate(
         &self,
-        _: &DefaultServerTlsStream,
+        _: &TlsStream<TcpStream>,
         _: &TcpStream,
     ) -> Result<bool, std::io::Error> {
         Ok(true)
