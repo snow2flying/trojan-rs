@@ -12,7 +12,7 @@ async-std = "1.9.0"
 env_logger = "0.8"
 rustls = "0.19.1"
 async-tls = {path = "../async-tls"}
-
+tide = "0.16.0"
 
 [[bin]]
 name = "trojan"

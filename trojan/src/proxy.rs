@@ -17,7 +17,6 @@ use std::fmt::{Debug, Formatter};
 use std::io::Cursor;
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::{fmt, sync::Arc};
-use x509_parser::nom::HexDisplay;
 use crate::copy::copy;
 pub struct ProxyBuilder {
     addr: String,
@@ -231,19 +230,19 @@ async fn proxy(
     fallback: String
 ) -> Result<()> {
 
-    let mut passwd_hash = [0u8; HASH_STR_LEN];
-    let len = tls_stream.read(&mut passwd_hash).await?;
+    let mut passwd_buf = [0u8; HASH_STR_LEN];
+    let len = tls_stream.read(&mut passwd_buf).await?;
     if len != HASH_STR_LEN {
         // first_packet.extend_from_slice(&hash_buf[..len]);
         error!("first packet too short");
-        redirect_fallback(&source,&fallback,tls_stream,&passwd_hash).await?;
+        redirect_fallback(&source,&fallback,tls_stream,&passwd_buf).await?;
 
         return Err(Error::Eor(anyhow::anyhow!("first packet too short")));
     }
-    debug!("received client passwd: {:?}",String::from_utf8_lossy(&passwd_hash).to_string());
-    if !authenticator.contains(& String::from_utf8_lossy(&passwd_hash).to_string()) {
+    debug!("received client passwd: {:?}",hex::encode(&passwd_buf));
+    if !authenticator.contains(&hex::encode(&passwd_buf)) {
         debug!("authentication failed, dropping connection");
-        redirect_fallback(&source,&fallback,tls_stream,&passwd_hash).await?;
+        redirect_fallback(&source,&fallback,tls_stream,&passwd_buf).await?;
         return Err(Error::Eor(anyhow::anyhow!("authenticate failed")));
     } else {
         debug!("authentication succeeded");
